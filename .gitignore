@@ -1,0 +1,31 @@
+
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+frontend/.env
+frontend/.env.*
+!frontend/.env.local.example
+
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Node
+**/node_modules/
+**/npm-debug.log*
+**/yarn-error.log*
+
+# Build outputs
+frontend/dist/
+frontend/build/
+frontend/.next/
+backend/dist/
+backend/build/
+
+# OS/editor junk
+.DS_Store
+*.log
+.vscode/
+.idea/

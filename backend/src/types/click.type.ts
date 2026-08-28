@@ -11,6 +11,7 @@ export interface ClickType {
     browser?: string;
     referrer?: string;
     userAgent?: string;
+    fingerprint?: string;
     isBot?: boolean;
     botReason?: string;
     clickedAt?: Date | string;

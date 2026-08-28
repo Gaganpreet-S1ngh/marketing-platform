@@ -48,6 +48,11 @@ const clickSchema = new Schema<IClickDocument>(
             type: String,
             default: null,
         },
+        fingerprint: {
+            type: String,
+            default: null,
+            index: true,
+        },
         isBot: {
             type: Boolean,
             default: false,
@@ -72,5 +77,6 @@ const clickSchema = new Schema<IClickDocument>(
 clickSchema.index({ linkId: 1, isBot: 1 });
 clickSchema.index({ creatorId: 1, isBot: 1 });
 clickSchema.index({ isBot: 1, clickedAt: -1 });
+clickSchema.index({ fingerprint: 1 });
 
 export const ClickModel = mongoose.model<IClickDocument>("Click", clickSchema);

@@ -8,6 +8,7 @@ import { ClickModel } from "../models/click.model";
 import { User } from "../models/user.model";
 import { logger } from "../utils/logger";
 import { UAParser } from "ua-parser-js";
+import { generateFingerprint, permanentlyBlockInRedis } from "../helpers/botProtection.helper";
 
 const STREAM_KEY = "click_events";
 const GROUP = "click_worker_group";
@@ -45,6 +46,7 @@ interface RawClickEvent {
     linkId: string;
     creatorId: string;
     ip: string;
+    fingerprint: string;
     userAgent: string;
     referrer: string;
     acceptLanguage: string;
@@ -102,7 +104,8 @@ function scoreClick(data: {
     const ua = (data.userAgent || "").toLowerCase();
     const botKeywords = [
         "bot", "crawler", "spider", "headless", "curl", "wget", "python",
-        "postman", "insomnia", "phantomjs", "puppeteer", "selenium", "axios"
+        "postman", "insomnia", "phantomjs", "puppeteer", "selenium", "axios",
+        "httpclient", "java", "go-http-client", "node-fetch", "got", "superagent"
     ];
 
     for (const keyword of botKeywords) {
@@ -144,14 +147,20 @@ function parseStreamEntries(entries: any[]): RawClickEvent[] {
                 if (key === "event" && val) {
                     try {
                         const payload = JSON.parse(val);
+                        const ip = payload.ip || "";
+                        const ua = payload.userAgent || "";
+                        const lang = payload.acceptLanguage || "";
+                        const fp = payload.fingerprint || generateFingerprint(ip, ua, lang);
+
                         parsed.push({
                             streamId,
                             linkId: payload.linkId,
                             creatorId: payload.creatorId,
-                            ip: payload.ip || "",
-                            userAgent: payload.userAgent || "",
+                            ip,
+                            fingerprint: fp,
+                            userAgent: ua,
                             referrer: payload.referrer || "",
-                            acceptLanguage: payload.acceptLanguage || "",
+                            acceptLanguage: lang,
                             clickedAt: payload.clickedAt || new Date().toISOString(),
                         });
                     } catch (e) {
@@ -189,6 +198,7 @@ function enrichBatch(batch: RawClickEvent[]) {
             linkId: raw.linkId,
             creatorId: raw.creatorId,
             ip: raw.ip,
+            fingerprint: raw.fingerprint,
             country: geo.country,
             city: geo.city,
             device: deviceInfo.device,
@@ -255,36 +265,41 @@ async function startWorker() {
             try {
                 await ClickModel.insertMany(enriched, { ordered: false });
             } catch (insertError: any) {
-                console.log(insertError)
                 logger.error("ClickModel.insertMany partial batch warning:", insertError?.message);
             }
 
-            // Detect creators receiving bot/burst attacks and flag them
+            // Permanently block bots identified during batch evaluation & flag creators
             const flaggedCreatorIds = new Set<string>();
             for (const item of enriched) {
-                if (item.isBot && item.creatorId) {
-                    flaggedCreatorIds.add(item.creatorId);
-                }
-            }
-            if (flaggedCreatorIds.size > 0) {
-                for (const cId of flaggedCreatorIds) {
-                    try {
-                        await User.updateOne({ _id: cId, status: "active" }, { $set: { status: "flagged" } });
-                        logger.warn(`Creator '${cId}' has been FLAGGED due to bot spam detection.`);
-                    } catch (flagErr) {
-                        logger.error(flagErr, `Failed to flag creator '${cId}'`);
+                if (item.isBot) {
+                    if (item.creatorId) {
+                        flaggedCreatorIds.add(item.creatorId.toString());
                     }
+                    await permanentlyBlockInRedis(redis, item.ip, item.fingerprint, item.botReason);
                 }
             }
 
+            if (flaggedCreatorIds.size > 0) {
+                try {
+                    await User.updateMany(
+                        { _id: { $in: Array.from(flaggedCreatorIds) } },
+                        { $set: { status: "flagged" } }
+                    );
+                    logger.warn(`Creators [${Array.from(flaggedCreatorIds).join(", ")}] FLAGGED due to bot spam detection.`);
+                } catch (flagErr) {
+                    logger.error(flagErr, "Failed to flag creators batch");
+                }
+            }
+
+            // Acknowledge and delete specific stream entries
             const streamIds = batch.map((item) => item.streamId);
             if (streamIds.length > 0) {
                 await redis.xack(STREAM_KEY, GROUP, ...streamIds);
                 await redis.xdel(STREAM_KEY, ...streamIds);
             }
 
-            // Periodic trim safeguard
-            await redis.xtrim(STREAM_KEY, "MAXLEN", "~", 1000).catch(() => {});
+            // Redis Stream Memory Clearance: Completely purge acknowledged stream entries to prevent memory leaks
+            await redis.xtrim(STREAM_KEY, "MAXLEN", "0").catch(() => {});
         } catch (loopError: any) {
             logger.error(loopError, "Error in worker processing loop");
             await new Promise((res) => setTimeout(res, 1000));

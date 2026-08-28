@@ -52,9 +52,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     const res = await api.post("/api/user/auth/login", { email, password });
     if (res.data) {
-      if (res.data.access_token && typeof window !== "undefined") {
-        localStorage.setItem("marketing-token", res.data.access_token);
-      }
       await fetchSession();
     }
     return res.data;
@@ -64,9 +61,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await api.get("/api/user/auth/logout");
     } finally {
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("marketing-token");
-      }
       setUser(null);
     }
   };

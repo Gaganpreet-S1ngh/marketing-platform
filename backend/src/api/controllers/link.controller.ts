@@ -2,6 +2,12 @@ import { Request, Response } from "express";
 import { LinkService } from "../../services/link.service";
 import { RedisManager } from "../../config/redis.config";
 import { logger } from "../../utils/logger";
+import {
+    generateFingerprint,
+    isKnownBotUserAgent,
+    isBlacklistedInRedis,
+    permanentlyBlockInRedis,
+} from "../../helpers/botProtection.helper";
 
 export class LinkController {
     private linkService: LinkService;
@@ -145,6 +151,31 @@ export class LinkController {
                 return;
             }
 
+            const userAgent = (req.headers["user-agent"] || "") as string;
+            const acceptLanguage = (req.headers["accept-language"] || "") as string;
+            const rawIp = (req.ip || req.socket.remoteAddress || "").toString();
+
+            // 1. Universal Device Fingerprint generation for every request
+            const fingerprint = generateFingerprint(rawIp, userAgent, acceptLanguage);
+            const redis = RedisManager.instance.redisClient;
+
+            // 2. Check if IP or Fingerprint is permanently blacklisted in Redis
+            const isBlocked = await isBlacklistedInRedis(redis, rawIp, fingerprint);
+            if (isBlocked) {
+                res.status(403).json({ error: "Access denied: Permanently blocked due to bot activity" });
+                return;
+            }
+
+            // 3. Instant Bot Signature Check (e.g. Postman, Axios, Curl, Python, missing headers)
+            const botCheck = isKnownBotUserAgent(userAgent, acceptLanguage);
+            if (botCheck.isBot) {
+                // Permanently block this bot IP and Fingerprint in Redis immediately
+                await permanentlyBlockInRedis(redis, rawIp, fingerprint, botCheck.reason);
+                logger.warn(`Permanently banned bot (${botCheck.reason}) IP: ${rawIp}, Fingerprint: ${fingerprint}`);
+                res.status(403).json({ error: "Access denied: Bot activity detected" });
+                return;
+            }
+
             const result = await this.linkService.getLinkForRedirect(slug);
 
             if (result.status !== 302 || !result.destinationUrl) {
@@ -153,22 +184,18 @@ export class LinkController {
             }
 
             if (result.clickData) {
-                const xForwardedFor = req.headers["x-forwarded-for"];
-                const rawIp = typeof xForwardedFor === "string"
-                    ? xForwardedFor.split(",")[0].trim()
-                    : req.socket.remoteAddress || "";
-
                 const clickEvent = {
                     linkId: result.clickData.linkId,
                     creatorId: result.clickData.creatorId,
                     ip: rawIp,
-                    userAgent: req.headers["user-agent"] || "",
+                    fingerprint,
+                    userAgent,
                     referrer: (req.headers["referer"] || req.headers["referrer"] || "") as string,
-                    acceptLanguage: req.headers["accept-language"] || "",
+                    acceptLanguage,
                     clickedAt: new Date().toISOString(),
                 };
 
-                RedisManager.instance.redisClient
+                redis
                     .xadd("click_events", "MAXLEN", "~", "10000", "*", "event", JSON.stringify(clickEvent))
                     .catch((err) => logger.error("click stream push failed", err));
             }

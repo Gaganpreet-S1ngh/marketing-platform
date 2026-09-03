@@ -17,7 +17,7 @@ spec:
         - name: ghcr-secret
       containers:
         - name: backend
-          image: ghcr.io/IMAGE_OWNER/marketing-platform-backend:latest
+          image: ghcr.io/gaganpreet-s1ngh/marketing-platform-backend:latest
           imagePullPolicy: Always
           envFrom:
             - secretRef:
@@ -32,7 +32,7 @@ spec:
             - name: REDIS_PORT
               value: "6379"
             - name: FRONTEND_URL
-              value: "https://103.12.34.56.sslip.io"
+              value: "https://187.127.174.68.sslip.io"
           ports:
             - containerPort: 7007
           resources:

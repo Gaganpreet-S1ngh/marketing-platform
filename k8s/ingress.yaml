@@ -14,10 +14,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - 103.12.34.56.sslip.io
+        - 187.127.174.68.sslip.io
       secretName: frontend-tls
   rules:
-    - host: 103.12.34.56.sslip.io
+    - host: 187.127.174.68.sslip.io
       http:
         paths:
           - path: /
@@ -42,10 +42,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - api.103.12.34.56.sslip.io
+        - api.187.127.174.68.sslip.io
       secretName: backend-tls
   rules:
-    - host: api.103.12.34.56.sslip.io
+    - host: api.187.127.174.68.sslip.io
       http:
         paths:
           - path: /

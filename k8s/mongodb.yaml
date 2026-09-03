@@ -19,17 +19,29 @@ metadata:
   namespace: mp-prod
 spec:
   replicas: 1
+
+  # IMPORTANT:
+  # Stop the old MongoDB before starting a new one.
+  # Prevents two mongod processes from using the same PVC.
+  strategy:
+    type: Recreate
+
   selector:
     matchLabels:
       app: mongodb
+
   template:
     metadata:
       labels:
         app: mongodb
+
     spec:
+      terminationGracePeriodSeconds: 30
+
       containers:
         - name: mongodb
           image: mongo:7.0
+          imagePullPolicy: IfNotPresent
 
           envFrom:
             - secretRef:
@@ -37,6 +49,7 @@ spec:
 
           ports:
             - containerPort: 27017
+              protocol: TCP
 
           resources:
             requests:
@@ -46,7 +59,6 @@ spec:
               cpu: "1"
               memory: "1Gi"
 
-          # THIS IS THE IMPORTANT PART
           volumeMounts:
             - name: mongodb-data
               mountPath: /data/db
@@ -87,7 +99,10 @@ metadata:
 spec:
   selector:
     app: mongodb
+
   ports:
     - port: 27017
       targetPort: 27017
+      protocol: TCP
+
   type: ClusterIP

@@ -19,10 +19,12 @@ export class RedisManager {
         if (this._isConnected) return;
 
         try {
+            const redisPassword = process.env.REDIS_PASSWORD || undefined;
+
             this._redisClient = new Redis({
                 host: process.env.REDIS_HOST || "localhost",
                 port: Number(process.env.REDIS_PORT) || 6379,
-                password: process.env.REDIS_PASSWORD || undefined,
+                password: redisPassword,
                 db: Number(process.env.REDIS_DB) || 0,
                 maxRetriesPerRequest: 3,
                 lazyConnect: true,
@@ -35,7 +37,7 @@ export class RedisManager {
             this._redisSession = new Redis({
                 host: process.env.REDIS_HOST || "localhost",
                 port: Number(process.env.REDIS_PORT) || 6379,
-                password: process.env.REDIS_PASSWORD || undefined,
+                password: redisPassword,
                 db: 1, // Use separate database for sessions
                 maxRetriesPerRequest: 3,
                 lazyConnect: true,
@@ -45,23 +47,13 @@ export class RedisManager {
                 commandTimeout: 5000,
             });
 
-            // Actually connect
-            await Promise.all([
-                this._redisClient.connect(),
-                this._redisSession.connect(),
-            ]);
-
-            this._isConnected = true;
-
-            logger.info("Redis Manager: All connections established successfully");
-
-            // Redis connection handlers
+            // Register error and connection handlers BEFORE connecting to capture auth errors cleanly
             this._redisClient.on("connect", () => {
                 logger.info("Redis connected successfully");
             });
 
             this._redisClient.on("error", (err) => {
-                logger.error(" Redis connection error:", err);
+                logger.error("Redis connection error:", err);
             });
 
             this._redisClient.on("ready", () => {
@@ -75,16 +67,24 @@ export class RedisManager {
             this._redisSession.on("error", (err) => {
                 logger.error("Redis session store error:", err);
             });
+
+            // Actually connect
+            await Promise.all([
+                this._redisClient.connect(),
+                this._redisSession.connect(),
+            ]);
+
+            this._isConnected = true;
+            logger.info("Redis Manager: All connections established successfully");
         } catch (error) {
             this._isConnected = false;
 
             // Cleanup on failure
             await this._cleanup();
 
-            logger.error(" Redis Manager: Failed to connect:", error);
+            logger.error("Redis Manager: Failed to connect:", error);
             throw new Error(
-                `Redis connection failed: ${error instanceof Error ? error.message : "Unknown error"
-                }`
+                `Redis connection failed: ${error instanceof Error ? error.message : "Unknown error"}`
             );
         }
     }

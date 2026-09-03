@@ -70,9 +70,22 @@ function parseUA(userAgent: string) {
     }
 }
 
+function isPrivateIp(ip: string): boolean {
+    if (!ip || ip === "127.0.0.1" || ip === "::1" || ip === "localhost") return true;
+    if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("127.")) return true;
+    if (ip.startsWith("172.")) {
+        const parts = ip.split(".");
+        if (parts.length >= 2) {
+            const secondOctet = parseInt(parts[1], 10);
+            if (secondOctet >= 16 && secondOctet <= 31) return true;
+        }
+    }
+    return false;
+}
+
 function geoLookup(ip: string): { country: string; city: string } {
-    if (!ip || ip === "127.0.0.1" || ip === "::1" || ip.startsWith("192.168.") || ip.startsWith("10.")) {
-        return { country: "Local", city: "Localhost" };
+    if (isPrivateIp(ip)) {
+        return { country: "Private Network", city: "Internal IP" };
     }
 
     if (!geoReader) {

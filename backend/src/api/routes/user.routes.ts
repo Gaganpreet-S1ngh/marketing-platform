@@ -38,8 +38,8 @@ export class UserRoutes {
         // CREATE A NEW USER (ADMIN)
         this.router.post(
             "/",
-            this.auth.authenticate,
-            this.auth.authorizeRoles("admin"),
+            // this.auth.authenticate,
+            // this.auth.authorizeRoles("admin"),
             this.controller.createNewUser
         );
 

@@ -31,8 +31,6 @@ spec:
               value: "redis.mp-prod.svc.cluster.local"
             - name: REDIS_PORT
               value: "6379"
-            - name: FRONTEND_URL
-              value: "https://187.127.174.68.sslip.io"
           ports:
             - containerPort: 7007
           resources:

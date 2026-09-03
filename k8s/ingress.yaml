@@ -20,6 +20,13 @@ spec:
     - host: 187.127.174.68.sslip.io
       http:
         paths:
+          - path: /r/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 7007
           - path: /
             pathType: Prefix
             backend:

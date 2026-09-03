@@ -136,6 +136,7 @@ export const expressApp = async () => {
   const linkRoutes = new LinkRoutes(auth, linkController);
   app.use("/api/admin/links", linkRoutes.router);
   app.get("/api/r/:slug", redirectRateLimiter, linkController.handleRedirect);
+  app.get("/r/:slug", redirectRateLimiter, linkController.handleRedirect);
 
   // Analytics Service, Controller, Routes
   const analyticsService = new AnalyticsService(

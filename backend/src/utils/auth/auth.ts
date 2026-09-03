@@ -10,6 +10,7 @@ import { generateRandomString } from "../../helpers/genRandom";
 import { randomInt, randomUUID } from "crypto";
 import crypto from "crypto"
 import { JwtUser } from "../../types/auth.type";
+import { getClientIp } from "../../helpers/ip.helper";
 // Change access token expiry
 export const ACCESS_TOKEN_EXPIRY = "7d";
 
@@ -206,7 +207,7 @@ export class Auth {
   getDeviceInfo = (req: Request) => {
     return {
       userAgent: req.get("User-Agent"),
-      ip: req.ip,
+      ip: getClientIp(req),
       platform: req.get("Sec-CH-UA-Platform"),
       timestamp: Date.now(),
     };

@@ -115,7 +115,8 @@ export default function LinksPage() {
   }, [user]);
 
   const handleCopyUrl = (slug: string, url?: string) => {
-    const fullUrl = url || `${window.location.origin}/r/${slug}`;
+    console.log(process.env.NEXT_PUBLIC_API_URL)
+    const fullUrl = url || `${process.env.NEXT_PUBLIC_API_URL}/r/${slug}`;
     navigator.clipboard.writeText(fullUrl);
     setCopiedSlug(slug);
     setTimeout(() => setCopiedSlug(null), 2000);

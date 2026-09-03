@@ -39,7 +39,30 @@ export function isKnownBotUserAgent(userAgent: string, acceptLanguage: string): 
 }
 
 /**
- * Checks if an IP or device fingerprint is permanently blacklisted in Redis.
+ * Rate limit check for bots using Redis counter with TTL.
+ * Returns true if request count exceeds maxRequests in the given windowSeconds.
+ */
+export async function isBotRateLimited(
+    redisClient: Redis,
+    ip: string,
+    fingerprint: string,
+    windowSeconds: number = 60,
+    maxRequests: number = 30
+): Promise<boolean> {
+    try {
+        const key = `rl:bot:${ip || fingerprint}`;
+        const current = await redisClient.incr(key);
+        if (current === 1) {
+            await redisClient.expire(key, windowSeconds);
+        }
+        return current > maxRequests;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Checks if an IP or device fingerprint is blacklisted in Redis.
  */
 export async function isBlacklistedInRedis(redisClient: Redis, ip: string, fingerprint: string): Promise<boolean> {
     try {
@@ -60,18 +83,18 @@ export async function isBlacklistedInRedis(redisClient: Redis, ip: string, finge
 }
 
 /**
- * Permanently bans a bot IP and device fingerprint in Redis (no TTL).
+ * Blocks a bot IP and device fingerprint in Redis with 24h TTL to prevent key flooding.
  */
-export async function permanentlyBlockInRedis(redisClient: Redis, ip: string, fingerprint: string, reason?: string): Promise<void> {
+export async function blockInRedisWithTTL(redisClient: Redis, ip: string, fingerprint: string, reason?: string, ttlSeconds: number = 86400): Promise<void> {
     try {
         const pipeline = redisClient.pipeline();
         const value = JSON.stringify({ blockedAt: new Date().toISOString(), reason: reason || "Bot detected" });
 
-        if (ip) pipeline.set(`block:bot:ip:${ip}`, value);
-        if (fingerprint) pipeline.set(`block:bot:fp:${fingerprint}`, value);
+        if (ip) pipeline.set(`block:bot:ip:${ip}`, value, "EX", ttlSeconds);
+        if (fingerprint) pipeline.set(`block:bot:fp:${fingerprint}`, value, "EX", ttlSeconds);
 
         await pipeline.exec();
-    } catch (err) {
+    } catch {
         // Redis log error handled caller-side
     }
 }

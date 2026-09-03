@@ -30,6 +30,17 @@ const userSchema = new Schema(
             required: true,
             default: "active",
         },
+        botSeverity: {
+            type: String,
+            enum: ["none", "low", "medium", "high", "critical"],
+            default: "none",
+        },
+        botMetrics: {
+            totalClicks: { type: Number, default: 0 },
+            botClicks: { type: Number, default: 0 },
+            botRatio: { type: Number, default: 0 },
+            lastEvaluatedAt: { type: Date, default: null },
+        },
         organization: {
             type: String,
             default: undefined,
@@ -43,5 +54,8 @@ const userSchema = new Schema(
         timestamps: true,
     }
 );
+
+userSchema.index({ status: 1 });
+userSchema.index({ botSeverity: 1 });
 
 export const User = mongoose.model("User", userSchema);

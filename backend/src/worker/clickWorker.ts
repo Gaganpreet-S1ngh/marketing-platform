@@ -8,7 +8,8 @@ import { ClickModel } from "../models/click.model";
 import { User } from "../models/user.model";
 import { logger } from "../utils/logger";
 import { UAParser } from "ua-parser-js";
-import { generateFingerprint, permanentlyBlockInRedis } from "../helpers/botProtection.helper";
+import { generateFingerprint } from "../helpers/botProtection.helper";
+import { Types } from "mongoose";
 
 const STREAM_KEY = "click_events";
 const GROUP = "click_worker_group";
@@ -17,6 +18,7 @@ const BATCH_SIZE = 100;
 const BATCH_INTERVAL_MS = 500;
 
 let geoReader: Reader<CityResponse> | null = null;
+let isStopping = false;
 
 async function initGeoReader(): Promise<void> {
     try {
@@ -50,6 +52,8 @@ interface RawClickEvent {
     userAgent: string;
     referrer: string;
     acceptLanguage: string;
+    isBot?: boolean;
+    botReason?: string;
     clickedAt: string;
 }
 
@@ -161,6 +165,8 @@ function parseStreamEntries(entries: any[]): RawClickEvent[] {
                             userAgent: ua,
                             referrer: payload.referrer || "",
                             acceptLanguage: lang,
+                            isBot: payload.isBot,
+                            botReason: payload.botReason,
                             clickedAt: payload.clickedAt || new Date().toISOString(),
                         });
                     } catch (e) {
@@ -194,6 +200,9 @@ function enrichBatch(batch: RawClickEvent[]) {
             burstCount,
         });
 
+        const finalIsBot = raw.isBot !== undefined ? raw.isBot || botCheck.isBot : botCheck.isBot;
+        const finalBotReason = raw.botReason || botCheck.reason;
+
         return {
             linkId: raw.linkId,
             creatorId: raw.creatorId,
@@ -205,11 +214,78 @@ function enrichBatch(batch: RawClickEvent[]) {
             browser: deviceInfo.browser,
             referrer: raw.referrer,
             userAgent: raw.userAgent,
-            isBot: botCheck.isBot,
-            botReason: botCheck.reason,
+            isBot: finalIsBot,
+            botReason: finalBotReason,
             clickedAt: new Date(raw.clickedAt),
         };
     });
+}
+
+async function evaluateCreatorsBotMetrics(creatorIds: Set<string>): Promise<void> {
+    for (const creatorId of creatorIds) {
+        if (!creatorId) continue;
+        try {
+            const objectCreatorId = new Types.ObjectId(creatorId);
+
+            const agg = await ClickModel.aggregate([
+                { $match: { creatorId: objectCreatorId } },
+                {
+                    $group: {
+                        _id: "$creatorId",
+                        totalClicks: { $sum: 1 },
+                        botClicks: {
+                            $sum: { $cond: [{ $eq: ["$isBot", true] }, 1, 0] },
+                        },
+                    },
+                },
+            ]);
+
+            if (!agg || agg.length === 0) continue;
+
+            const totalClicks = agg[0].totalClicks || 0;
+            const botClicks = agg[0].botClicks || 0;
+            const botRatio = totalClicks > 0 ? Number(((botClicks / totalClicks) * 100).toFixed(2)) : 0;
+
+            let severity: "none" | "low" | "medium" | "high" | "critical" = "none";
+            let status: "active" | "flagged" = "active";
+
+            if (botClicks >= 500 || (botClicks >= 50 && botRatio >= 75)) {
+                severity = "critical";
+                status = "flagged";
+            } else if (botClicks >= 150 || (botClicks >= 30 && botRatio >= 50)) {
+                severity = "high";
+                status = "flagged";
+            } else if (botClicks >= 50 || (botClicks >= 15 && botRatio >= 25)) {
+                severity = "medium";
+                status = "flagged";
+            } else if (botClicks >= 10 || (botClicks >= 5 && botRatio >= 10)) {
+                severity = "low";
+                status = "active";
+            } else {
+                severity = "none";
+                status = "active";
+            }
+
+            const updatePayload: any = {
+                botSeverity: severity,
+                botMetrics: {
+                    totalClicks,
+                    botClicks,
+                    botRatio,
+                    lastEvaluatedAt: new Date(),
+                },
+            };
+
+            if (status === "flagged") {
+                updatePayload.status = "flagged";
+            }
+
+            await User.updateOne({ _id: objectCreatorId }, { $set: updatePayload });
+            logger.info(`Creator ${creatorId} evaluated: totalClicks=${totalClicks}, botClicks=${botClicks} (${botRatio}%), severity=${severity}`);
+        } catch (evalErr) {
+            logger.error(evalErr, `Error evaluating creator bot severity for ${creatorId}`);
+        }
+    }
 }
 
 async function startWorker() {
@@ -236,7 +312,7 @@ async function startWorker() {
     logger.info(`Click worker running. Group=${GROUP}, Consumer=${CONSUMER}`);
 
     // Continuous Processing Loop
-    while (true) {
+    while (!isStopping) {
         try {
             const entries: any = await redis.xreadgroup(
                 "GROUP",
@@ -262,50 +338,58 @@ async function startWorker() {
 
             const enriched = enrichBatch(batch);
 
+            let insertedSuccessfully = false;
             try {
                 await ClickModel.insertMany(enriched, { ordered: false });
+                insertedSuccessfully = true;
             } catch (insertError: any) {
-                logger.error("ClickModel.insertMany partial batch warning:", insertError?.message);
+                logger.error("ClickModel.insertMany batch write note:", insertError?.message);
+                insertedSuccessfully = true;
             }
 
-            // Permanently block bots identified during batch evaluation & flag creators
-            const flaggedCreatorIds = new Set<string>();
-            for (const item of enriched) {
-                if (item.isBot) {
+            if (insertedSuccessfully) {
+                // Collect affected creator IDs for metrics evaluation
+                const creatorIds = new Set<string>();
+                for (const item of enriched) {
                     if (item.creatorId) {
-                        flaggedCreatorIds.add(item.creatorId.toString());
+                        creatorIds.add(item.creatorId.toString());
                     }
-                    await permanentlyBlockInRedis(redis, item.ip, item.fingerprint, item.botReason);
+                }
+
+                if (creatorIds.size > 0) {
+                    await evaluateCreatorsBotMetrics(creatorIds);
+                }
+
+                // Acknowledge and delete processed stream entries safely from Redis Stream
+                const streamIds = batch.map((item) => item.streamId);
+                if (streamIds.length > 0) {
+                    await redis.xack(STREAM_KEY, GROUP, ...streamIds);
+                    await redis.xdel(STREAM_KEY, ...streamIds);
                 }
             }
-
-            if (flaggedCreatorIds.size > 0) {
-                try {
-                    await User.updateMany(
-                        { _id: { $in: Array.from(flaggedCreatorIds) } },
-                        { $set: { status: "flagged" } }
-                    );
-                    logger.warn(`Creators [${Array.from(flaggedCreatorIds).join(", ")}] FLAGGED due to bot spam detection.`);
-                } catch (flagErr) {
-                    logger.error(flagErr, "Failed to flag creators batch");
-                }
-            }
-
-            // Acknowledge and delete specific stream entries
-            const streamIds = batch.map((item) => item.streamId);
-            if (streamIds.length > 0) {
-                await redis.xack(STREAM_KEY, GROUP, ...streamIds);
-                await redis.xdel(STREAM_KEY, ...streamIds);
-            }
-
-            // Redis Stream Memory Clearance: Completely purge acknowledged stream entries to prevent memory leaks
-            await redis.xtrim(STREAM_KEY, "MAXLEN", "0").catch(() => {});
         } catch (loopError: any) {
             logger.error(loopError, "Error in worker processing loop");
             await new Promise((res) => setTimeout(res, 1000));
         }
     }
 }
+
+async function gracefulShutdown() {
+    if (isStopping) return;
+    isStopping = true;
+    logger.info("Received shutdown signal. Stopping Click Worker...");
+    try {
+        geoReader = null;
+        await RedisManager.instance.disconnect();
+        await DatabaseManager.instance.disconnect();
+    } catch (err) {
+        logger.error(err, "Error during Click Worker shutdown");
+    }
+    process.exit(0);
+}
+
+process.on("SIGINT", gracefulShutdown);
+process.on("SIGTERM", gracefulShutdown);
 
 process.on("uncaughtException", (err) => {
     logger.error(err, "Uncaught Exception in Click Worker process");

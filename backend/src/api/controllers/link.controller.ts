@@ -2,11 +2,12 @@ import { Request, Response } from "express";
 import { LinkService } from "../../services/link.service";
 import { RedisManager } from "../../config/redis.config";
 import { logger } from "../../utils/logger";
+import { getClientIp } from "../../helpers/ip.helper";
 import {
     generateFingerprint,
     isKnownBotUserAgent,
     isBlacklistedInRedis,
-    permanentlyBlockInRedis,
+    isBotRateLimited,
 } from "../../helpers/botProtection.helper";
 
 export class LinkController {
@@ -153,27 +154,29 @@ export class LinkController {
 
             const userAgent = (req.headers["user-agent"] || "") as string;
             const acceptLanguage = (req.headers["accept-language"] || "") as string;
-            const rawIp = (req.ip || req.socket.remoteAddress || "").toString();
+            const rawIp = getClientIp(req);
 
             // 1. Universal Device Fingerprint generation for every request
             const fingerprint = generateFingerprint(rawIp, userAgent, acceptLanguage);
             const redis = RedisManager.instance.redisClient;
 
-            // 2. Check if IP or Fingerprint is permanently blacklisted in Redis
+            // 2. Check if IP or Fingerprint is blacklisted in Redis
             const isBlocked = await isBlacklistedInRedis(redis, rawIp, fingerprint);
             if (isBlocked) {
-                res.status(403).json({ error: "Access denied: Permanently blocked due to bot activity" });
+                res.status(403).json({ error: "Access denied: Access blocked due to severe abuse" });
                 return;
             }
 
-            // 3. Instant Bot Signature Check (e.g. Postman, Axios, Curl, Python, missing headers)
+            // 3. Bot Signature Check & Bot Rate Limiting
             const botCheck = isKnownBotUserAgent(userAgent, acceptLanguage);
             if (botCheck.isBot) {
-                // Permanently block this bot IP and Fingerprint in Redis immediately
-                await permanentlyBlockInRedis(redis, rawIp, fingerprint, botCheck.reason);
-                logger.warn(`Permanently banned bot (${botCheck.reason}) IP: ${rawIp}, Fingerprint: ${fingerprint}`);
-                res.status(403).json({ error: "Access denied: Bot activity detected" });
-                return;
+                // Rate limit bots (max 30 requests / minute) to prevent server overload, but do NOT hard-block 403
+                const isThrottled = await isBotRateLimited(redis, rawIp, fingerprint, 60, 30);
+                if (isThrottled) {
+                    res.status(429).json({ error: "Rate limit exceeded for bot request. Please slow down." });
+                    return;
+                }
+                logger.info(`Bot request allowed under rate limit (${botCheck.reason}) IP: ${rawIp}, FP: ${fingerprint}`);
             }
 
             const result = await this.linkService.getLinkForRedirect(slug);
@@ -192,6 +195,8 @@ export class LinkController {
                     userAgent,
                     referrer: (req.headers["referer"] || req.headers["referrer"] || "") as string,
                     acceptLanguage,
+                    isBot: botCheck.isBot,
+                    botReason: botCheck.reason || null,
                     clickedAt: new Date().toISOString(),
                 };
 

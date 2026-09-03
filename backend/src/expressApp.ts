@@ -34,8 +34,8 @@ export const expressApp = async () => {
   // ║                    TRUST PROXY                       ║
   // ╚══════════════════════════════════════════════════════╝
 
-  // Trust proxy for proper IP extraction behind Cloudflare/Nginx/ALB
-  app.set("trust proxy", 1);
+  // Trust proxy for proper IP extraction behind Cloudflare/Nginx/ngrok/ALB
+  app.set("trust proxy", true);
 
   // ╔══════════════════════════════════════════════════════╗
   // ║                GLOBAL SECURITY MIDDLEWARES           ║
@@ -49,10 +49,7 @@ export const expressApp = async () => {
   // ║             INITIALIZE DATABASE & REDIS              ║
   // ╚══════════════════════════════════════════════════════╝
 
-  await DatabaseManager.instance.connect(
-    process.env.MONGODB_URI || process.env.MONGODB_URL || "mongodb://localhost:27017/marketing_platform",
-    {}
-  );
+  await DatabaseManager.instance.connect(process.env.MONGODB_URL || "", {});
   await RedisManager.instance.connect();
 
   // ╔══════════════════════════════════════════════════════╗
@@ -69,10 +66,10 @@ export const expressApp = async () => {
   );
   app.use(globalRateLimiter);
 
-  // 2. Strict Auth Login Rate Limiter (5 login attempts per 15 mins per IP)
+  // 2. Strict Auth Login Rate Limiter (20 login attempts per 15 mins per IP)
   const authRateLimiter = createRateLimiter(
     15 * 60 * 1000,
-    5,
+    20,
     "rl_auth",
     RedisManager.instance.redisClient,
     "Too many login attempts. Account access temporarily limited for security. Please try again in 15 minutes."
@@ -137,12 +134,7 @@ export const expressApp = async () => {
   const linkService = new LinkService(linkRepository, userRepository);
   const linkController = new LinkController(linkService);
   const linkRoutes = new LinkRoutes(auth, linkController);
-
   app.use("/api/admin/links", linkRoutes.router);
-  app.use("/api/link", linkRoutes.router);
-
-  // Public Redirect Handlers (/r/:slug and /api/r/:slug) with redirectRateLimiter
-  app.get("/r/:slug", redirectRateLimiter, linkController.handleRedirect);
   app.get("/api/r/:slug", redirectRateLimiter, linkController.handleRedirect);
 
   // Analytics Service, Controller, Routes
@@ -153,7 +145,6 @@ export const expressApp = async () => {
   );
   const analyticsController = new AnalyticsController(analyticsService);
   const analyticsRoutes = new AnalyticsRoutes(auth, analyticsController);
-
   app.use("/api/admin/analytics", analyticsRoutes.router);
 
   // ╔══════════════════════════════════════════════════════╗

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: click-worker
+  namespace: mp-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: click-worker
+  template:
+    metadata:
+      labels:
+        app: click-worker
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: click-worker
+          image: ghcr.io/IMAGE_OWNER/marketing-platform-backend:latest
+          imagePullPolicy: Always
+          command: ["npm", "run", "worker:prod"]
+          envFrom:
+            - secretRef:
+                name: backend-env
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: REDIS_HOST
+              value: "redis.mp-prod.svc.cluster.local"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: FRONTEND_URL
+              value: "https://103.12.34.56.sslip.io"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"

@@ -8,7 +8,8 @@
     "build": "tsc -p . && npm run copy:proto",
     "copy:proto": "cpx \"src/**/*.proto\" dist",
     "docker-start": "node dist/server.js",
-    "worker": "ts-node src/worker/clickWorker.ts"
+    "worker": "ts-node src/worker/clickWorker.ts",
+    "worker:prod": "node dist/worker/clickWorker.js"
   },
   "author": "",
   "license": "ISC",

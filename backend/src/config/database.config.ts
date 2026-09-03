@@ -4,6 +4,7 @@ import { logger } from "../utils/logger";
 export class DatabaseManager {
   private static _instance: DatabaseManager;
   private isConnected: boolean = false;
+  private listenersAttached: boolean = false;
   private retryCount: number = 0;
 
   //function accessed as a property of class
@@ -25,24 +26,28 @@ export class DatabaseManager {
     try {
       await this.connectWithRetry(url, options);
 
-      mongoose.connection.on("connected", () => {
-        logger.info("Mongoose connected to MongoDB");
-        this.isConnected = true;
-      });
+      if (!this.listenersAttached) {
+        mongoose.connection.on("connected", () => {
+          logger.info("Mongoose connected to MongoDB");
+          this.isConnected = true;
+        });
 
-      mongoose.connection.on("error", (error) => {
-        logger.error(error, " : Mongoose connection error");
-        this.isConnected = false;
-      });
+        mongoose.connection.on("error", (error) => {
+          logger.error(error, " : Mongoose connection error");
+          this.isConnected = false;
+        });
 
-      mongoose.connection.on("disconnected", () => {
-        logger.warn("Mongoose disconnected from MongoDB");
-        this.isConnected = false;
-        this.handleDisconnection(url, options);
-      });
+        mongoose.connection.on("disconnected", () => {
+          logger.warn("Mongoose disconnected from MongoDB");
+          this.isConnected = false;
+          this.handleDisconnection(url, options);
+        });
 
-      process.on("SIGINT", this.gracefulShutdown.bind(this));
-      process.on("SIGTERM", this.gracefulShutdown.bind(this));
+        process.on("SIGINT", this.gracefulShutdown.bind(this));
+        process.on("SIGTERM", this.gracefulShutdown.bind(this));
+
+        this.listenersAttached = true;
+      }
 
       this.isConnected = true;
       logger.info("Successfully connected to MongoDB");

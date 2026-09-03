@@ -17,7 +17,7 @@ spec:
         - name: ghcr-secret
       containers:
         - name: frontend
-          image: ghcr.io/gaganpreet-s1ngh/marketing-platform-frontend:latest
+          image: ghcr.io/gaganpreet-s1ngh/marketing-platform-frontend:92798f4
           imagePullPolicy: Always
           env:
             - name: NODE_ENV

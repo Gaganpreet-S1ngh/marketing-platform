@@ -24,6 +24,8 @@ spec:
               value: "production"
             - name: PORT
               value: "3010"
+            - name: BACKEND_INTERNAL_URL
+              value: "http://backend.mp-prod.svc.cluster.local:7007"
           ports:
             - containerPort: 3010
           resources:
